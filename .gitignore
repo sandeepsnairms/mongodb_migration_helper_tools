@@ -7,3 +7,5 @@ obj/
 .vscode/
 *.log
 appsettings.Development.json
+Properties/launchSettings.json
+Properties/PublishProfiles/
