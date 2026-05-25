@@ -1,0 +1,116 @@
+@page "/"
+@inject AuthService AuthService
+@inject NavigationManager NavigationManager
+
+<PageTitle>Login - MongoDB Test Tools</PageTitle>
+
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            @if (!AuthService.IsAuthenticated)
+            {
+                <div class="card shadow">
+                    <div class="card-body p-5">
+                        <div class="text-center mb-4">
+                            <h2>MongoDB Test Tools</h2>
+                            <p class="text-muted">Please login to continue</p>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(errorMessage))
+                        {
+                            <div class="alert alert-danger" role="alert">
+                                @errorMessage
+                            </div>
+                        }
+
+                        <div class="mb-3">
+                            <label for="password" class="form-label">Password</label>
+                            <input type="password" class="form-control form-control-lg" id="password" 
+                                   @bind="password" @bind:event="oninput" @onkeydown="HandleKeyPress" 
+                                   placeholder="Enter password" autofocus />
+                        </div>
+
+                        <div class="d-grid">
+                            <button class="btn btn-primary btn-lg" @onclick="HandleLogin">
+                                <i class="bi bi-box-arrow-in-right"></i> Login
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="card shadow">
+                    <div class="card-body p-5">
+                        <div class="text-center mb-4">
+                            <h2>MongoDB Test Tools</h2>
+                            <p class="text-muted">Select a tool to get started</p>
+                        </div>
+
+                        <div class="d-grid gap-3">
+                            <a href="/changestream" class="btn btn-outline-primary btn-lg">
+                                <i class="bi bi-speedometer2"></i> Change Stream Monitor
+                                <p class="mb-0 mt-2 small text-muted">Monitor MongoDB change streams and measure throughput</p>
+                            </a>
+                            <a href="/generator" class="btn btn-outline-success btn-lg">
+                                <i class="bi bi-lightning-fill"></i> Change Stream Generator
+                                <p class="mb-0 mt-2 small text-muted">Generate change stream events with multi-threaded operations</p>
+                            </a>
+                            <a href="/comparer" class="btn btn-outline-info btn-lg">
+                                <i class="bi bi-arrow-left-right"></i> Collection Comparer
+                                <p class="mb-0 mt-2 small text-muted">Compare collections between source and target using document hashes</p>
+                            </a>
+                        </div>
+
+                        <div class="d-grid mt-4">
+                            <button class="btn btn-outline-secondary" @onclick="Logout">
+                                <i class="bi bi-box-arrow-right"></i> Logout
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string password = "";
+    private string errorMessage = "";
+
+    private void HandleLogin()
+    {
+        errorMessage = "";
+
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            errorMessage = "Please enter a password";
+            return;
+        }
+
+        if (AuthService.Login(password))
+        {
+            password = "";
+            StateHasChanged();
+        }
+        else
+        {
+            errorMessage = "Invalid password";
+            password = "";
+        }
+    }
+
+    private void Logout()
+    {
+        AuthService.Logout();
+        StateHasChanged();
+    }
+
+    private void HandleKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            HandleLogin();
+        }
+    }
+}

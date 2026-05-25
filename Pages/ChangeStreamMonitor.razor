@@ -1,0 +1,258 @@
+@page "/changestream"
+@page "/monitor"
+@inject ChangeStreamMonitorService MonitorService
+@inject NavigationManager NavigationManager
+@inject AuthService AuthService
+@implements IDisposable
+
+<PageTitle>MongoDB Change Stream Monitor</PageTitle>
+
+<div class="container mt-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>MongoDB Change Stream Speed Tracker</h1>
+        <button class="btn btn-outline-secondary" @onclick="Logout">
+            <i class="bi bi-box-arrow-right"></i> Logout
+        </button>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="mb-3">
+                <label for="connectionString" class="form-label">Connection String</label>
+                <input type="password" class="form-control" id="connectionString" @bind="connectionString" 
+                       placeholder="mongodb://localhost:27017" disabled="@MonitorService.IsRunning" />
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Stream Level</label>
+                <div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="streamLevel" id="levelCollection"
+                               value="collection" checked="@(streamLevel == "collection")"
+                               @onchange="@(() => streamLevel = "collection")" disabled="@MonitorService.IsRunning" />
+                        <label class="form-check-label" for="levelCollection">Collection</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="streamLevel" id="levelDatabase"
+                               value="database" checked="@(streamLevel == "database")"
+                               @onchange="@(() => streamLevel = "database")" disabled="@MonitorService.IsRunning" />
+                        <label class="form-check-label" for="levelDatabase">Database</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="streamLevel" id="levelCluster"
+                               value="cluster" checked="@(streamLevel == "cluster")"
+                               @onchange="@(() => streamLevel = "cluster")" disabled="@MonitorService.IsRunning" />
+                        <label class="form-check-label" for="levelCluster">Cluster</label>
+                    </div>
+                </div>
+                <small class="form-text text-muted">
+                    @if (streamLevel == "cluster") { <span>Watches all databases and collections on the cluster</span> }
+                    else if (streamLevel == "database") { <span>Watches all collections in the specified database</span> }
+                    else { <span>Watches the specified collection only</span> }
+                </small>
+            </div>
+
+            <div class="mb-3">
+                <label for="database" class="form-label">Database @(streamLevel == "cluster" ? "(not required for cluster level)" : "")</label>
+                <input type="text" class="form-control" id="database" @bind="database"
+                       placeholder="myDatabase" disabled="@(MonitorService.IsRunning || streamLevel == "cluster")" />
+            </div>
+
+            <div class="mb-3 @(streamLevel != "collection" ? "opacity-50" : "")">
+                <label for="collection" class="form-label">Collection @(streamLevel != "collection" ? "(not required)" : "")</label>
+                <input type="text" class="form-control" id="collection" @bind="collection"
+                       placeholder="myCollection" disabled="@(MonitorService.IsRunning || streamLevel != "collection")" />
+            </div>
+
+            @if (streamLevel == "cluster")
+            {
+                <div class="mb-3">
+                    <label for="namespaceFilter" class="form-label">Collection Namespace Filter (Optional)</label>
+                    <textarea class="form-control" id="namespaceFilter" rows="3" @bind="namespaceFilter"
+                              placeholder="db1.coll1, db1.coll2, db2.coll1" disabled="@MonitorService.IsRunning"></textarea>
+                    <small class="form-text text-muted">Comma-separated list of db.collection namespaces. Only changes for these collections will be tracked. Leave empty to track all.</small>
+                </div>
+            }
+
+            <div class="mb-3">
+                <label for="resumeToken" class="form-label">Resume Token (Optional)</label>
+                <textarea class="form-control" id="resumeToken" rows="3" @bind="resumeToken" 
+                          placeholder='{"_data": "..."}' disabled="@MonitorService.IsRunning"></textarea>
+                <small class="form-text text-muted">Leave empty to start from the current time</small>
+            </div>
+
+            <div class="d-flex gap-2 mb-3">
+                <button class="btn btn-success" @onclick="StartMonitoring" disabled="@MonitorService.IsRunning">
+                    <i class="bi bi-play-fill"></i> Start
+                </button>
+                <button class="btn btn-danger" @onclick="StopMonitoringAsync" disabled="@(!MonitorService.IsRunning)">
+                    <i class="bi bi-stop-fill"></i> Stop
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(MonitorService.LastError))
+            {
+                <div class="alert alert-danger" role="alert">
+                    @MonitorService.LastError
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (MonitorService.IsRunning || MonitorService.TotalChanges > 0)
+    {
+        <div class="card mt-4">
+            <div class="card-body">
+                <h5 class="card-title">Monitoring Statistics</h5>
+                
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <div class="stat-box">
+                            <div class="stat-label">Status</div>
+                            <div class="stat-value">
+                                @if (MonitorService.IsRunning)
+                                {
+                                    <span class="badge bg-success">Running</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-secondary">Stopped</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="stat-box">
+                            <div class="stat-label">Stream Level</div>
+                            <div class="stat-value">
+                                <span class="badge @(MonitorService.CurrentLevel == ChangeStreamLevel.Cluster ? "bg-warning text-dark" : MonitorService.CurrentLevel == ChangeStreamLevel.Database ? "bg-info text-dark" : "bg-primary")">
+                                    @MonitorService.CurrentLevel
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <div class="stat-box">
+                            <div class="stat-label">Monitoring Scope</div>
+                            <div class="stat-value text-break" style="font-size:1rem;">@MonitorService.MonitoringScope</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="stat-box">
+                            <div class="stat-label">Total Changes</div>
+                            <div class="stat-value">@MonitorService.TotalChanges.ToString("N0")</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <div class="stat-box highlight">
+                            <div class="stat-label">Changes Per Minute</div>
+                            <div class="stat-value display-4">@MonitorService.ChangesPerMinute.ToString("N2")</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="stat-box highlight">
+                            <div class="stat-label">TPS (Transactions Per Second)</div>
+                            <div class="stat-value display-4">@MonitorService.ChangesPerSecond.ToString("N2")</div>
+                        </div>
+                    </div>
+                </div>
+
+                @if (MonitorService.CollectionStatsMap.Any())
+                {
+                    <h6 class="mt-4 mb-2">Per-Collection Breakdown</h6>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Collection Namespace</th>
+                                    <th class="text-end">Changes</th>
+                                    <th class="text-end">TPS</th>
+                                    <th class="text-end">Max TPS</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var entry in MonitorService.CollectionStatsMap.OrderByDescending(e => e.Value.TotalChanges))
+                                {
+                                    <tr>
+                                        <td>@entry.Key</td>
+                                        <td class="text-end">@entry.Value.TotalChanges.ToString("N0")</td>
+                                        <td class="text-end">@entry.Value.Tps.ToString("N2")</td>
+                                        <td class="text-end">@entry.Value.MaxTps.ToString("N2")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string connectionString = "";
+    private string database = "";
+    private string collection = "";
+    private string resumeToken = "";
+    private string streamLevel = "collection";
+    private string namespaceFilter = "";
+
+    protected override void OnInitialized()
+    {
+        MonitorService.OnStateChanged += OnServiceStateChanged;
+    }
+
+    private void OnServiceStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void StartMonitoring()
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return;
+
+        if (streamLevel != "cluster" && string.IsNullOrWhiteSpace(database))
+            return;
+
+        if (streamLevel == "collection" && string.IsNullOrWhiteSpace(collection))
+            return;
+
+        var level = streamLevel switch
+        {
+            "cluster" => ChangeStreamLevel.Cluster,
+            "database" => ChangeStreamLevel.Database,
+            _ => ChangeStreamLevel.Collection
+        };
+
+        string[] namespaces = Array.Empty<string>();
+        if (!string.IsNullOrWhiteSpace(namespaceFilter))
+        {
+            namespaces = namespaceFilter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        MonitorService.Start(connectionString, database, collection, resumeToken, level, namespaces);
+    }
+
+    private async Task StopMonitoringAsync()
+    {
+        await MonitorService.StopAsync();
+    }
+
+    private void Logout()
+    {
+        AuthService.Logout();
+        NavigationManager.NavigateTo("/");
+    }
+
+    public void Dispose()
+    {
+        MonitorService.OnStateChanged -= OnServiceStateChanged;
+    }
+}

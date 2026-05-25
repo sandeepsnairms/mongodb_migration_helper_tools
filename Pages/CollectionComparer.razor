@@ -1,0 +1,509 @@
+@page "/comparer"
+@inject CollectionComparerService ComparerService
+@inject NavigationManager NavigationManager
+@inject AuthService AuthService
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+<PageTitle>MongoDB Collection Comparer</PageTitle>
+
+<div class="container mt-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>MongoDB Collection Comparer</h1>
+        <button class="btn btn-outline-secondary" @onclick="Logout">
+            <i class="bi bi-box-arrow-right"></i> Logout
+        </button>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="mb-3">
+                <label for="sourceConnectionString" class="form-label">Source Connection String <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="sourceConnectionString" @bind="sourceConnectionString" 
+                       placeholder="mongodb://source:27017" disabled="@ComparerService.IsRunning" required />
+            </div>
+
+            <div class="mb-3">
+                <label for="targetConnectionString" class="form-label">Target Connection String <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="targetConnectionString" @bind="targetConnectionString" 
+                       placeholder="mongodb://target:27017" disabled="@ComparerService.IsRunning" required />
+            </div>
+
+            <div class="mb-3">
+                <label for="sampleSize" class="form-label">Sample Size <span class="text-danger">*</span></label>
+                <input type="number" class="form-control" id="sampleSize" @bind="sampleSize" 
+                       min="1" max="10000" disabled="@ComparerService.IsRunning" required />
+                <small class="form-text text-muted">Number of random documents to compare per collection (1-10,000)</small>
+            </div>
+
+            <div class="mb-3">
+                <label for="namespaces" class="form-label">Namespaces <span class="text-danger">*</span></label>
+                <textarea class="form-control" id="namespaces" rows="5" @bind="namespaces" 
+                          placeholder="database1.collection1,database1.collection2,database2.collection1" 
+                          disabled="@ComparerService.IsRunning" required></textarea>
+                <small class="form-text text-muted">Comma-separated list of namespaces in db.collection format</small>
+            </div>
+
+            <div class="mb-3">
+                <label for="timestampFields" class="form-label">Timestamp Fields (optional)</label>
+                <input type="text" class="form-control" id="timestampFields" @bind="timestampFields" 
+                       placeholder="updatedAt,timestamp,createdAt" disabled="@ComparerService.IsRunning" />
+                <small class="form-text text-muted">Comma-separated fields to sort descending (most recent first). Lag from UTC is shown for mismatched documents.</small>
+            </div>
+
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <label for="collectionParallelism" class="form-label">Collection Parallelism</label>
+                    <input type="number" class="form-control" id="collectionParallelism" @bind="collectionParallelism" 
+                           min="1" max="32" disabled="@ComparerService.IsRunning" />
+                    <small class="form-text text-muted">Number of collections to compare simultaneously (1-32)</small>
+                </div>
+            </div>
+
+            <div class="d-flex gap-2 mb-3 align-items-end">
+                <button class="btn btn-success" @onclick="StartComparison" disabled="@ComparerService.IsRunning">
+                    <i class="bi bi-play-fill"></i> Start Comparison
+                </button>
+                <button class="btn btn-danger" @onclick="StopComparison" disabled="@(!ComparerService.IsRunning)">
+                    <i class="bi bi-stop-fill"></i> Stop
+                </button>
+                <div class="d-flex align-items-end gap-2 ms-3">
+                    <div>
+                        <label for="lagThreshold" class="form-label mb-0" style="font-size:0.85rem;">Lag threshold (seconds)</label>
+                        <input type="number" class="form-control form-control-sm" id="lagThreshold" 
+                               @bind="lagThresholdSeconds" min="0" style="width:100px"
+                               disabled="@ComparerService.IsRunning" />
+                    </div>
+                    <div class="form-check mb-1">
+                        <input class="form-check-input" type="checkbox" id="autoRecheck" 
+                               @bind="autoRecheck" disabled="@ComparerService.IsRunning" />
+                        <label class="form-check-label" for="autoRecheck" style="font-size:0.85rem;">Auto recheck</label>
+                    </div>
+                    @if (!ComparerService.IsRunning && ComparerService.Results.Any())
+                    {
+                        <button class="btn btn-warning btn-sm" @onclick="RecheckMismatches">
+                            <i class="bi bi-arrow-repeat"></i> Recheck Mismatches
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @if (!string.IsNullOrEmpty(recheckStatusMessage))
+            {
+                <div class="alert alert-info fade show d-flex align-items-center" role="alert">
+                    <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div>
+                    @recheckStatusMessage
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(recheckSkippedMessage))
+            {
+                <div class="alert alert-secondary alert-dismissible fade show" role="alert">
+                    <i class="bi bi-info-circle"></i> @recheckSkippedMessage
+                    <button type="button" class="btn-close" @onclick="() => recheckSkippedMessage = string.Empty"></button>
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                    <strong>Error:</strong> @errorMessage
+                    <button type="button" class="btn-close" @onclick="() => errorMessage = string.Empty"></button>
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (ComparerService.IsRunning || ComparerService.Results.Any())
+    {
+        <div class="row mt-4">
+            <div class="col-md-3">
+                <div class="stat-box">
+                    <div class="stat-label">Progress</div>
+                    <div class="stat-value">@ComparerService.ProcessedCollections / @ComparerService.TotalCollections</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-box">
+                    <div class="stat-label">Total Mismatches</div>
+                    <div class="stat-value text-@(ComparerService.TotalMismatches > 0 ? "danger" : "success")">
+                        @ComparerService.TotalMismatches
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-box">
+                    <div class="stat-label">Max Lag</div>
+                    <div class="stat-value text-@(ComparerService.MaxLag > TimeSpan.Zero ? "warning" : "success")" style="font-size: 1.2rem;">
+                        @(ComparerService.MaxLag > TimeSpan.Zero ? FormatLag(ComparerService.MaxLag) : "—")
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-box">
+                    <div class="stat-label">Active Workers</div>
+                    <div class="stat-value">
+                        @if (ComparerService.IsRechecking)
+                        {
+                            <span class="text-warning">Rechecking...</span>
+                        }
+                        else
+                        {
+                            @(ComparerService.ActiveCollections > 0 ? ComparerService.ActiveCollections.ToString() : "Idle")
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Comparison Results</h5>
+                @if (ComparerService.Results.Any())
+                {
+                    <div class="d-flex gap-2 align-items-center">
+                        <div class="form-check me-2">
+                            <input class="form-check-input" type="checkbox" id="copyMismatchOnly" @bind="copyMismatchOnly" />
+                            <label class="form-check-label" for="copyMismatchOnly" style="font-size:0.85rem;">Mismatches only</label>
+                        </div>
+                        <div class="form-check me-2">
+                            <input class="form-check-input" type="checkbox" id="copyHeadersOnly" @bind="copyHeadersOnly" />
+                            <label class="form-check-label" for="copyHeadersOnly" style="font-size:0.85rem;">Headers only</label>
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary" @onclick="CopyResultsAsHtml" disabled="@tableCopied">
+                            <i class="bi @(tableCopied ? "bi-check-lg" : "bi-table")"></i>
+                            @(tableCopied ? "Copied!" : "Copy as HTML")
+                        </button>
+                        <button class="btn btn-sm btn-outline-primary" @onclick="CopyResultsAsCsv" disabled="@csvCopied">
+                            <i class="bi @(csvCopied ? "bi-check-lg" : "bi-clipboard")"></i>
+                            @(csvCopied ? "Copied!" : "Copy as CSV")
+                        </button>
+                    </div>
+                }
+            </div>
+            <div class="card-body">
+                @if (ComparerService.Results.Any())
+                {
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Namespace</th>
+                                    <th>Source Count</th>
+                                    <th>Target Count</th>
+                                    <th>Sample Size</th>
+                                    <th>Mismatches</th>
+                                    <th>Status</th>
+                                    <th>Compared At</th>
+                                    <th>Rechecked At</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var result in ComparerService.Results.OrderBy(r => r.Namespace))
+                                {
+                                    <tr>
+                                        <td>@result.Namespace</td>
+                                        <td>@result.SourceCount.ToString("N0")</td>
+                                        <td>@result.TargetCount.ToString("N0")</td>
+                                        <td>@result.SampleSize</td>
+                                        <td class="@(result.MismatchCount > 0 ? "text-danger fw-bold" : "text-success")">
+                                            @result.MismatchCount
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-@(result.IsSuccess && result.MismatchCount == 0 ? "success" : result.IsSuccess ? "warning" : "danger")">
+                                                @result.Status
+                                            </span>
+                                        </td>
+                                        <td>@result.ComparedAt.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                        <td>@(result.RecheckedAt.HasValue ? result.RecheckedAt.Value.ToString("yyyy-MM-dd HH:mm:ss") : "—")</td>
+                                    </tr>
+                                    @if (result.Errors.Any())
+                                    {
+                                        <tr>
+                                            <td colspan="8" class="bg-light">
+                                                <details>
+                                                    <summary class="text-danger" style="cursor: pointer;">
+                                                        <i class="bi bi-exclamation-triangle-fill"></i> @result.Errors.Count Error(s)
+                                                    </summary>
+                                                    <ul class="mt-2 mb-0">
+                                                        @foreach (var error in result.Errors)
+                                                        {
+                                                            <li><small>@error</small></li>
+                                                        }
+                                                    </ul>
+                                                </details>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <p class="text-muted mb-0">No results yet. Start a comparison to see results here.</p>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string sourceConnectionString = string.Empty;
+    private string targetConnectionString = string.Empty;
+    private int sampleSize = 100;
+    private int collectionParallelism = 4;
+    private string timestampFields = string.Empty;
+    private string namespaces = string.Empty;
+    private string errorMessage = string.Empty;
+    private string recheckStatusMessage = string.Empty;
+    private string recheckSkippedMessage = string.Empty;
+    private bool csvCopied = false;
+    private bool tableCopied = false;
+    private bool copyMismatchOnly = false;
+    private bool copyHeadersOnly = false;
+    private int lagThresholdSeconds = 300;
+    private bool autoRecheck = true;
+
+    protected override void OnInitialized()
+    {
+        if (!AuthService.IsAuthenticated)
+        {
+            NavigationManager.NavigateTo("/");
+            return;
+        }
+
+        ComparerService.OnStateChanged += OnServiceStateChanged;
+    }
+
+    private void OnServiceStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task StartComparison()
+    {
+        errorMessage = string.Empty;
+
+        // Validation
+        if (string.IsNullOrWhiteSpace(sourceConnectionString))
+        {
+            errorMessage = "Source connection string is required.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(targetConnectionString))
+        {
+            errorMessage = "Target connection string is required.";
+            return;
+        }
+
+        if (sampleSize < 1 || sampleSize > 10000)
+        {
+            errorMessage = "Sample size must be between 1 and 10,000.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(namespaces))
+        {
+            errorMessage = "At least one namespace is required.";
+            return;
+        }
+
+        // Parse namespaces
+        var namespaceList = namespaces
+            .Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(ns => ns.Trim())
+            .Where(ns => !string.IsNullOrWhiteSpace(ns))
+            .ToList();
+
+        if (!namespaceList.Any())
+        {
+            errorMessage = "No valid namespaces found.";
+            return;
+        }
+
+        try
+        {
+            var timestampFieldList = timestampFields
+                .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(f => f.Trim())
+                .Where(f => !string.IsNullOrWhiteSpace(f))
+                .ToList();
+
+            await ComparerService.StartComparison(
+                sourceConnectionString,
+                targetConnectionString,
+                sampleSize,
+                namespaceList,
+                Math.Clamp(collectionParallelism, 1, 32),
+                timestampFieldList);
+
+            // Auto recheck mismatches above threshold after first run
+            if (autoRecheck)
+            {
+                var hasMismatchesAboveThreshold = ComparerService.Results.Any(r => r.MismatchedDocs.Any(d => d.Lag >= TimeSpan.FromSeconds(lagThresholdSeconds)));
+                if (hasMismatchesAboveThreshold)
+                {
+                    var delaySeconds = Math.Min(lagThresholdSeconds, 5 * 60);
+                    recheckStatusMessage = $"Waiting {delaySeconds}s before auto recheck...";
+                    StateHasChanged();
+
+                    // Wait in 1-second increments so we can cancel if autoRecheck is toggled off
+                    for (int i = 0; i < delaySeconds; i++)
+                    {
+                        await Task.Delay(1000);
+                        if (!autoRecheck)
+                            break;
+                    }
+
+                    if (autoRecheck)
+                    {
+                        recheckStatusMessage = "Rechecking mismatches...";
+                        StateHasChanged();
+                        await ComparerService.RecheckMismatches(
+                            sourceConnectionString,
+                            targetConnectionString,
+                            lagThresholdSeconds,
+                            timestampFieldList.Any() ? timestampFieldList : null);
+                    }
+                    recheckStatusMessage = string.Empty;
+                }
+                else
+                {
+                    recheckSkippedMessage = "Auto recheck skipped — no mismatches above the lag threshold.";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to start comparison: {ex.Message}";
+        }
+    }
+
+    private async Task StopComparison()
+    {
+        await ComparerService.Stop();
+    }
+
+    private async Task RecheckMismatches()
+    {
+        errorMessage = string.Empty;
+        recheckSkippedMessage = string.Empty;
+        autoRecheck = false;
+
+        if (string.IsNullOrWhiteSpace(sourceConnectionString) || string.IsNullOrWhiteSpace(targetConnectionString))
+        {
+            errorMessage = "Connection strings are required for recheck.";
+            return;
+        }
+
+        if (!ComparerService.Results.Any(r => r.MismatchedDocs.Any()))
+        {
+            recheckSkippedMessage = "Nothing to recheck — no mismatched documents found.";
+            return;
+        }
+
+        var timestampFieldList = timestampFields
+            .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(f => f.Trim())
+            .Where(f => !string.IsNullOrWhiteSpace(f))
+            .ToList();
+
+        try
+        {
+            await ComparerService.RecheckMismatches(
+                sourceConnectionString,
+                targetConnectionString,
+                0,
+                timestampFieldList.Any() ? timestampFieldList : null);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Recheck failed: {ex.Message}";
+        }
+    }
+
+    private async Task CopyResultsAsHtml()
+    {
+        var results = ComparerService.Results.OrderBy(r => r.Namespace).ToList();
+        if (copyMismatchOnly)
+            results = results.Where(r => r.MismatchCount > 0).ToList();
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("<table border='1' cellpadding='4' cellspacing='0' style='border-collapse:collapse;font-family:sans-serif;font-size:13px;'>");
+        sb.AppendLine("<tr style='background:#f0f0f0;font-weight:bold;'><td>Namespace</td><td>Source Count</td><td>Target Count</td><td>Sample Size</td><td>Mismatches</td><td>Status</td><td>Compared At</td><td>Rechecked At</td></tr>");
+        foreach (var r in results)
+        {
+            var mismatchStyle = r.MismatchCount > 0 ? "color:red;font-weight:bold;" : "color:green;";
+            var statusColor = r.IsSuccess && r.MismatchCount == 0 ? "green" : r.IsSuccess ? "orange" : "red";
+            var recheckedAt = r.RecheckedAt.HasValue ? r.RecheckedAt.Value.ToString("yyyy-MM-dd HH:mm:ss") : "";
+            sb.AppendLine($"<tr><td>{Enc(r.Namespace)}</td><td>{r.SourceCount:N0}</td><td>{r.TargetCount:N0}</td><td>{r.SampleSize}</td><td style='{mismatchStyle}'>{r.MismatchCount}</td><td style='color:{statusColor};'>{Enc(r.Status)}</td><td>{r.ComparedAt:yyyy-MM-dd HH:mm:ss}</td><td>{recheckedAt}</td></tr>");
+            if (!copyHeadersOnly && r.Errors.Any())
+            {
+                sb.AppendLine($"<tr><td colspan='8' style='background:#fff8f0;padding-left:20px;font-size:12px;'>");
+                foreach (var error in r.Errors)
+                    sb.AppendLine($"&#8627; {Enc(error)}<br/>");
+                sb.AppendLine("</td></tr>");
+            }
+        }
+        sb.AppendLine("</table>");
+        await JSRuntime.InvokeVoidAsync("copyHtmlToClipboard", sb.ToString());
+        tableCopied = true;
+        StateHasChanged();
+        await Task.Delay(2000);
+        tableCopied = false;
+        StateHasChanged();
+    }
+
+    private static string Enc(string s) => System.Net.WebUtility.HtmlEncode(s);
+
+    private async Task CopyResultsAsCsv()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Namespace,Source Count,Target Count,Sample Size,Mismatches,Status,Compared At,Rechecked At,Errors");
+        var results = ComparerService.Results.OrderBy(r => r.Namespace);
+        if (copyMismatchOnly)
+            results = results.Where(r => r.MismatchCount > 0).OrderBy(r => r.Namespace);
+        foreach (var r in results)
+        {
+            var errors = !copyHeadersOnly && r.Errors.Any() ? "\"" + string.Join("; ", r.Errors).Replace("\"", "\"\"") + "\"" : "";
+            var recheckedAt = r.RecheckedAt.HasValue ? r.RecheckedAt.Value.ToString("yyyy-MM-dd HH:mm:ss") : "";
+            sb.AppendLine($"{r.Namespace},{r.SourceCount},{r.TargetCount},{r.SampleSize},{r.MismatchCount},\"{r.Status}\",{r.ComparedAt:yyyy-MM-dd HH:mm:ss},{recheckedAt},{errors}");
+        }
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", sb.ToString());
+        csvCopied = true;
+        StateHasChanged();
+        await Task.Delay(2000);
+        csvCopied = false;
+        StateHasChanged();
+    }
+
+    private void Logout()
+    {
+        AuthService.Logout();
+        NavigationManager.NavigateTo("/");
+    }
+
+    public void Dispose()
+    {
+        ComparerService.OnStateChanged -= OnServiceStateChanged;
+    }
+
+    private string MaskConnectionString(string connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return string.Empty;
+
+        return new string('•', Math.Min(connectionString.Length, 20));
+    }
+
+    private static string FormatLag(TimeSpan lag)
+    {
+        if (lag.TotalDays >= 1)
+            return $"{lag.Days}d {lag.Hours}h {lag.Minutes}m";
+        if (lag.TotalHours >= 1)
+            return $"{lag.Hours}h {lag.Minutes}m {lag.Seconds}s";
+        return $"{lag.Minutes}m {lag.Seconds}s";
+    }
+}

@@ -1,0 +1,40 @@
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
+@inject AuthService AuthService
+@inject NavigationManager NavigationManager
+
+<Router AppAssembly="@typeof(App).Assembly">
+    <Found Context="routeData">
+        @if (routeData.PageType == typeof(Pages.Index) || AuthService.IsAuthenticated)
+        {
+            <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+            <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+        }
+        else
+        {
+            <LayoutView Layout="@typeof(MainLayout)">
+                <div class="container mt-5">
+                    <div class="alert alert-warning" role="alert">
+                        <h4 class="alert-heading">Authentication Required</h4>
+                        <p>You must be logged in to access this page.</p>
+                        <hr>
+                        <button class="btn btn-primary" @onclick="RedirectToLogin">Go to Login</button>
+                    </div>
+                </div>
+            </LayoutView>
+        }
+    </Found>
+    <NotFound>
+        <PageTitle>Not found</PageTitle>
+        <LayoutView Layout="@typeof(MainLayout)">
+            <p role="alert">Sorry, there's nothing at this address.</p>
+        </LayoutView>
+    </NotFound>
+</Router>
+
+@code {
+    private void RedirectToLogin()
+    {
+        NavigationManager.NavigateTo("/", true);
+    }
+}

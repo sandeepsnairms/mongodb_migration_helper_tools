@@ -1,0 +1,454 @@
+@page "/generator"
+@inject ChangeStreamGeneratorService GeneratorService
+@inject NavigationManager NavigationManager
+@inject AuthService AuthService
+@implements IDisposable
+
+<PageTitle>Change Stream Generator</PageTitle>
+
+<div class="container mt-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Change Stream Generator</h1>
+        <button class="btn btn-outline-secondary" @onclick="Logout">
+            <i class="bi bi-box-arrow-right"></i> Logout
+        </button>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title mb-4">Configuration</h5>
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="connectionString" class="form-label">Connection String</label>
+                    <input type="password" class="form-control" id="connectionString" @bind="connectionString" 
+                           placeholder="mongodb://localhost:27017" disabled="@GeneratorService.IsRunning" />
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label for="database" class="form-label">Database <span class="text-danger">*</span> <span class="text-muted">(Prefix)</span></label>
+                    <input type="text" class="form-control" id="database" @bind="database" 
+                           placeholder="Test" disabled="@(GeneratorService.IsRunning || randomDatabase || useNamespaceList)" required />
+                    <small class="form-text text-muted">
+                        @if (useNamespaceList)
+                        {
+                            <text>Overridden by namespace list</text>
+                        }
+                        else if (randomDatabase)
+                        {
+                            <text>Prefix for random DBs (e.g., Test01-Test@(dbRangeEnd.ToString("D2")))</text>
+                        }
+                        else
+                        {
+                            <text>Exact database name</text>
+                        }
+                    </small>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label for="collection" class="form-label">Collection <span class="text-danger">*</span> <span class="text-muted">(Prefix)</span></label>
+                    <input type="text" class="form-control" id="collection" @bind="collection" 
+                           placeholder="coll" disabled="@(GeneratorService.IsRunning || randomCollection || useNamespaceList)" required />
+                    <small class="form-text text-muted">
+                        @if (useNamespaceList)
+                        {
+                            <text>Overridden by namespace list</text>
+                        }
+                        else if (randomCollection)
+                        {
+                            <text>Prefix for random collections (e.g., coll001-coll@(collRangeEnd.ToString("D3")))</text>
+                        }
+                        else
+                        {
+                            <text>Exact collection name</text>
+                        }
+                    </small>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-3 mb-3">
+                    <label class="form-label d-block">Random Options</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="useNamespaceList" 
+                               @bind="useNamespaceList" disabled="@GeneratorService.IsRunning" />
+                        <label class="form-check-label" for="useNamespaceList">
+                            Use Namespace List
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="randomDatabase" 
+                               @bind="randomDatabase" disabled="@(GeneratorService.IsRunning || useNamespaceList)" />
+                        <label class="form-check-label" for="randomDatabase">
+                            Random Database
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="randomCollection" 
+                               @bind="randomCollection" disabled="@(GeneratorService.IsRunning || useNamespaceList)" />
+                        <label class="form-check-label" for="randomCollection">
+                            Random Collection
+                        </label>
+                    </div>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label for="dbRangeStart" class="form-label">Database Range</label>
+                    <div class="input-group">
+                        <input type="number" class="form-control" id="dbRangeStart" @bind="dbRangeStart" 
+                               min="1" max="10" placeholder="Start" 
+                               disabled="@(GeneratorService.IsRunning || !randomDatabase)" />
+                        <span class="input-group-text">to</span>
+                        <input type="number" class="form-control" @bind="dbRangeEnd" 
+                               min="1" max="10" placeholder="End" 
+                               disabled="@(GeneratorService.IsRunning || !randomDatabase)" />
+                    </div>
+                    <small class="form-text text-muted">Numeric suffix range (adds 01 to 10 to prefix)</small>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label for="collRangeStart" class="form-label">Collection Range</label>
+                    <div class="input-group">
+                        <input type="number" class="form-control" id="collRangeStart" @bind="collRangeStart" 
+                               min="1" max="999" placeholder="Start" 
+                               disabled="@(GeneratorService.IsRunning || !randomCollection)" />
+                        <span class="input-group-text">to</span>
+                        <input type="number" class="form-control" @bind="collRangeEnd" 
+                               min="1" max="999" placeholder="End" 
+                               disabled="@(GeneratorService.IsRunning || !randomCollection)" />
+                    </div>
+                    <small class="form-text text-muted">Numeric suffix range (adds 001, 002, etc. to prefix)</small>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label class="form-label d-block">Shard Key Options</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="enableShardKey" 
+                               @bind="enableShardKey" disabled="@GeneratorService.IsRunning" />
+                        <label class="form-check-label" for="enableShardKey">
+                            Enable Shard Key
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">Add shard key field to documents</small>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label class="form-label d-block">Operations</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="enableInserts" 
+                               @bind="enableInserts" disabled="@GeneratorService.IsRunning" />
+                        <label class="form-check-label" for="enableInserts">
+                            Insert
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="enableUpdates" 
+                               @bind="enableUpdates" disabled="@GeneratorService.IsRunning" />
+                        <label class="form-check-label" for="enableUpdates">
+                            Update
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="enableDeletes" 
+                               @bind="enableDeletes" disabled="@GeneratorService.IsRunning" />
+                        <label class="form-check-label" for="enableDeletes">
+                            Delete
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            @if (useNamespaceList)
+            {
+                <div class="row">
+                    <div class="col-md-12 mb-3">
+                        <label for="namespaceList" class="form-label">Collection Namespaces <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="namespaceList" @bind="namespaceList" rows="3"
+                                  placeholder="db1.coll1, db1.coll2, db2.coll1" disabled="@GeneratorService.IsRunning"></textarea>
+                        <small class="form-text text-muted">Comma-separated list of db.collection namespaces. A random namespace is picked per batch.</small>
+                    </div>
+                </div>
+            }
+
+            @if (enableShardKey)
+            {
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <label for="shardKeyField" class="form-label">Shard Key Field <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="shardKeyField" @bind="shardKeyField" 
+                               placeholder="tenant" disabled="@GeneratorService.IsRunning" required />
+                        <small class="form-text text-muted">Field name for shard key</small>
+                    </div>
+
+                    <div class="col-md-3 mb-3">
+                        <label for="shardKeyPrefix" class="form-label">Shard Key Prefix <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="shardKeyPrefix" @bind="shardKeyPrefix" 
+                               placeholder="T" disabled="@GeneratorService.IsRunning" required />
+                        <small class="form-text text-muted">Prefix for shard key values</small>
+                    </div>
+
+                    <div class="col-md-3 mb-3">
+                        <label for="shardKeyRangeStart" class="form-label">Shard Key Range</label>
+                        <div class="input-group">
+                            <input type="number" class="form-control" id="shardKeyRangeStart" @bind="shardKeyRangeStart" 
+                                   min="1" max="9999" placeholder="Start" 
+                                   disabled="@GeneratorService.IsRunning" required />
+                            <span class="input-group-text">to</span>
+                            <input type="number" class="form-control" @bind="shardKeyRangeEnd" 
+                                   min="1" max="9999" placeholder="End" 
+                                   disabled="@GeneratorService.IsRunning" required />
+                        </div>
+                        <small class="form-text text-muted">Range for shard key values (e.g., T001-T100)</small>
+                    </div>
+                </div>
+            }
+
+            <div class="row">
+                <div class="col-md-3 mb-3">
+                    <label for="prefix" class="form-label">Document Prefix</label>
+                    <input type="text" class="form-control" id="prefix" @bind="prefix" 
+                           placeholder="doc" disabled="@GeneratorService.IsRunning" />
+                    <small class="form-text text-muted">Prefix for customId field</small>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label for="threadCount" class="form-label">Thread Count</label>
+                    <input type="number" class="form-control" id="threadCount" @bind="threadCount" 
+                           min="1" max="50" disabled="@GeneratorService.IsRunning" />
+                    <small class="form-text text-muted">Number of parallel workers</small>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label for="batchSize" class="form-label">Batch Size</label>
+                    <input type="number" class="form-control" id="batchSize" @bind="batchSize" 
+                           min="1" max="1000" disabled="@GeneratorService.IsRunning" />
+                    <small class="form-text text-muted">Documents per batch</small>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label for="loopCount" class="form-label">Loop Count</label>
+                    <input type="number" class="form-control" id="loopCount" @bind="loopCount" 
+                           min="1" max="10000" disabled="@(GeneratorService.IsRunning || continuousMode)" />
+                    <small class="form-text text-muted">
+                        @if (continuousMode)
+                        {
+                            <text>N/A in continuous mode</text>
+                        }
+                        else
+                        {
+                            <text>Batches per thread (Total ops: @(threadCount * loopCount * batchSize) per operation)</text>
+                        }
+                    </small>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                    <label class="form-label d-block">Execution Mode</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="continuousMode" 
+                               @bind="continuousMode" disabled="@GeneratorService.IsRunning" />
+                        <label class="form-check-label" for="continuousMode">
+                            Continuous Mode
+                        </label>
+                    </div>
+                    <small class="form-text text-muted">
+                        @if (continuousMode)
+                        {
+                            <text>Run until stopped</text>
+                        }
+                        else
+                        {
+                            <text>Run @loopCount batch@(loopCount > 1 ? "es" : "") per thread</text>
+                        }
+                    </small>
+                </div>
+            </div>
+
+            <div class="d-flex gap-2 mb-3">
+                <button class="btn btn-success" @onclick="StartGeneration" disabled="@GeneratorService.IsRunning">
+                    <i class="bi bi-play-fill"></i> Start Generation
+                </button>
+                <button class="btn btn-danger" @onclick="StopGenerationAsync" disabled="@(!GeneratorService.IsRunning)">
+                    <i class="bi bi-stop-fill"></i> Stop Generation
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(GeneratorService.LastError))
+            {
+                <div class="alert alert-danger" role="alert">
+                    @GeneratorService.LastError
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (GeneratorService.IsRunning || GeneratorService.TotalInserted > 0)
+    {
+        <div class="card mt-4">
+            <div class="card-body">
+                <h5 class="card-title">Generation Statistics</h5>
+                
+                <div class="row mt-3">
+                    <div class="col-md-3">
+                        <div class="stat-box">
+                            <div class="stat-label">Status</div>
+                            <div class="stat-value">
+                                @if (GeneratorService.IsRunning)
+                                {
+                                    <span class="badge bg-success">Running</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-secondary">Stopped</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    @if (enableInserts)
+                    {
+                        <div class="col-md-3">
+                            <div class="stat-box">
+                                <div class="stat-label">Inserted</div>
+                                <div class="stat-value text-success">@GeneratorService.TotalInserted.ToString("N0")</div>
+                            </div>
+                        </div>
+                    }
+                    @if (enableUpdates)
+                    {
+                        <div class="col-md-3">
+                            <div class="stat-box">
+                                <div class="stat-label">Updated</div>
+                                <div class="stat-value text-primary">@GeneratorService.TotalUpdated.ToString("N0")</div>
+                            </div>
+                        </div>
+                    }
+                    @if (enableDeletes)
+                    {
+                        <div class="col-md-3">
+                            <div class="stat-box">
+                                <div class="stat-label">Deleted</div>
+                                <div class="stat-value text-danger">@GeneratorService.TotalDeleted.ToString("N0")</div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div class="row mt-3">
+                    <div class="col-md-12">
+                        <div class="stat-box highlight">
+                            <div class="stat-label">Operations Per Second</div>
+                            <div class="stat-value display-4">@GeneratorService.OperationsPerSecond.ToString("N2")</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string connectionString = "";
+    private string database = "";
+    private string collection = "";
+    private string prefix = "doc";
+    private int threadCount = 1;
+    private int batchSize = 10;
+    private int loopCount = 1;
+    private bool continuousMode = true;
+    private bool randomDatabase = false;
+    private bool randomCollection = false;
+    private int dbRangeStart = 1;
+    private int dbRangeEnd = 10;
+    private int collRangeStart = 1;
+    private int collRangeEnd = 200;
+    private bool enableInserts = true;
+    private bool enableUpdates = true;
+    private bool enableDeletes = true;
+    private bool enableShardKey = false;
+    private string shardKeyField = "tenant";
+    private string shardKeyPrefix = "T";
+    private int shardKeyRangeStart = 1;
+    private int shardKeyRangeEnd = 100;
+    private bool useNamespaceList = false;
+    private string namespaceList = "";
+
+    protected override void OnInitialized()
+    {
+        GeneratorService.OnStateChanged += OnServiceStateChanged;
+    }
+
+    private void OnServiceStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void StartGeneration()
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return;
+        }
+
+        if (useNamespaceList)
+        {
+            if (string.IsNullOrWhiteSpace(namespaceList))
+            {
+                return;
+            }
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(database))
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(collection))
+            {
+                return;
+            }
+        }
+
+        if (!enableInserts && !enableUpdates && !enableDeletes)
+        {
+            return;
+        }
+
+        if (enableShardKey)
+        {
+            if (string.IsNullOrWhiteSpace(shardKeyField) || string.IsNullOrWhiteSpace(shardKeyPrefix))
+            {
+                return;
+            }
+        }
+
+        // Parse namespace list into array
+        string[] namespaces = Array.Empty<string>();
+        if (useNamespaceList && !string.IsNullOrWhiteSpace(namespaceList))
+        {
+            namespaces = namespaceList.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        GeneratorService.Start(connectionString, database, collection, prefix, 
+                              threadCount, batchSize, loopCount, continuousMode, randomDatabase, randomCollection,
+                              dbRangeStart, dbRangeEnd, collRangeStart, collRangeEnd,
+                              enableInserts, enableUpdates, enableDeletes,
+                              enableShardKey, shardKeyField, shardKeyPrefix, shardKeyRangeStart, shardKeyRangeEnd,
+                              namespaces);
+    }
+
+    private async Task StopGenerationAsync()
+    {
+        await GeneratorService.StopAsync();
+    }
+
+    private void Logout()
+    {
+        AuthService.Logout();
+        NavigationManager.NavigateTo("/");
+    }
+
+    public void Dispose()
+    {
+        GeneratorService.OnStateChanged -= OnServiceStateChanged;
+    }
+}
